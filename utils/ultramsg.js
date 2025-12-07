@@ -10,26 +10,28 @@ export async function handleIncomingMessage(data) {
       return;
     }
 
-    const from = data.phone;
-    const message = data.text?.message || "";
+    const from = data.phone;  
+    const message = data.text?.message || ""; 
 
     const reply = "Olá! 👋 Aqui é o representante virtual Martín.\nComo posso te ajudar hoje?";
 
-    await sendText(instanceId, token, from, reply);
+    // Enviar resposta
+    const result = await sendText(instanceId, token, from, reply);
 
+    console.log("📤 Resposta da Z-API:", result);
     console.log("✅ Resposta enviada com sucesso!");
+
   } catch (error) {
     console.error("❌ Erro ao processar mensagem:", error);
   }
 }
 
-
 export async function sendText(instanceId, token, to, msg) {
-  const url = `https://api.z-api.io/instances/${instanceId}/token/${token}/send-text`;
+  const url = `https://api.z-api.io/instances/${instanceId}/token/${token}/send-messages`;
 
   const body = {
     phone: to,
-    message: msg
+    message: msg,
   };
 
   const res = await fetch(url, {
@@ -39,8 +41,5 @@ export async function sendText(instanceId, token, to, msg) {
   });
 
   const json = await res.json();
-  console.log("📤 Resposta da Z-API:", json);
-
   return json;
 }
-
