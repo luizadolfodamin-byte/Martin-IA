@@ -24,9 +24,22 @@ export async function handleIncomingMessage(data) {
 }
 
 export async function sendText(instanceId, token, to, msg) {
-  await fetch(`https://api.z-api.io/instances/${instanceId}/token/${token}/send-text`, {
+  const url = `https://api.z-api.io/instances/${instanceId}/token/${token}/send-message`;
+
+  const body = {
+    phone: to,
+    message: msg
+  };
+
+  const res = await fetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ phone: to, message: msg }),
+    body: JSON.stringify(body),
   });
+
+  const json = await res.json();
+  console.log("📤 Resposta da Z-API:", json);
+
+  return json;
 }
+
