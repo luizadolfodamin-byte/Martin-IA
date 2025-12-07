@@ -10,8 +10,8 @@ export async function handleIncomingMessage(data) {
       return;
     }
 
-    const from = data.phone;  
-    const message = data.text?.message || ""; 
+    const from = data.phone;
+    const message = data.text?.message || "";
 
     const reply = "Olá! 👋 Aqui é o representante virtual Martín.\nComo posso te ajudar hoje?";
 
@@ -29,7 +29,7 @@ export async function sendText(instanceId, token, to, msg) {
 
   const body = {
     phone: to,
-    text: msg
+    message: msg
   };
 
   const res = await fetch(url, {
