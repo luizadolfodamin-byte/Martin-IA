@@ -10,8 +10,8 @@ export async function handleIncomingMessage(data) {
       return;
     }
 
-    const from = data.from;
-    const message = data.body;
+    const from = data.phone;  
+    const message = data.text?.message || ""; 
 
     const reply = "Olá! 👋 Aqui é o representante virtual Martín.\nComo posso te ajudar hoje?";
 
