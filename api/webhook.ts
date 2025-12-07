@@ -1,4 +1,4 @@
-import { handleIncomingMessage } from "../../utils/ultramsg.js";
+import { handleIncomingMessage } from "../../utils/ultramsg";
 
 export default async function handler(req, res) {
   if (req.method !== "POST") {
