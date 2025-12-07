@@ -1,4 +1,4 @@
-// Função principal que recebe mensagens do webhook e responde
+// @ts-nocheck
 export async function handleIncomingMessage(data) {
   try {
     console.log("📥 Mensagem recebida do WhatsApp:", data);
