@@ -23,12 +23,13 @@ export async function handleIncomingMessage(data) {
   }
 }
 
+
 export async function sendText(instanceId, token, to, msg) {
-  const url = `https://api.z-api.io/instances/${instanceId}/token/${token}/send-message`;
+  const url = `https://api.z-api.io/instances/${instanceId}/token/${token}/send-text`;
 
   const body = {
     phone: to,
-    message: msg
+    text: msg
   };
 
   const res = await fetch(url, {
