@@ -10,7 +10,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const data = req.body;
     console.log("📩 Webhook recebido:", data);
 
-    // Envia a mensagem recebida para o manipulador (Martín IA)
     await handleIncomingMessage(data);
 
     return res.status(200).json({ success: true });
