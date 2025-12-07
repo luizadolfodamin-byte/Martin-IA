@@ -1,3 +1,5 @@
+import OpenAI from "openai";
+
 export async function handleIncomingMessage(data) {
   try {
     console.log("📩 Mensagem recebida do WhatsApp:", data);
@@ -5,22 +7,47 @@ export async function handleIncomingMessage(data) {
     const instanceId = process.env.ZAPI_INSTANCE_ID;
     const token = process.env.ZAPI_TOKEN;
     const clientToken = process.env.ZAPI_CLIENT_TOKEN;
+    const openaiKey = process.env.OPENAI_API_KEY;
 
     if (!instanceId || !token || !clientToken) {
-      console.error("❌ Variáveis Z-API não configuradas no Vercel!");
+      console.error("❌ Variáveis Z-API não configuradas!");
+      return;
+    }
+
+    if (!openaiKey) {
+      console.error("❌ OPENAI_API_KEY não configurada no Vercel!");
       return;
     }
 
     const from = data.phone;
-    const message = data.text?.message || "";
+    const userMessage = data.text?.message || "";
 
-    const reply =
-      "Olá! 👋 Aqui é o representante virtual Martín.\nComo posso te ajudar hoje?";
+    const client = new OpenAI({ apiKey: openaiKey });
 
-    const result = await sendText(instanceId, token, clientToken, from, reply);
+    const completion = await client.chat.completions.create({
+      model: "gpt-4o-mini",
+      messages: [
+        {
+          role: "system",
+          content: `
+Você é Martín, um representante comercial virtual educado, simpático, consultivo e profissional.
+Seu objetivo é ajudar o cliente, tirar dúvidas e oferecer soluções comerciais quando fizer sentido.
+Responda sempre de forma clara, amigável e útil.
+          `,
+        },
+        { role: "user", content: userMessage },
+      ],
+      max_tokens: 250,
+      temperature: 0.7,
+    });
 
-    console.log("📤 Resposta da Z-API:", result);
-    console.log("✅ Resposta enviada com sucesso!");
+    const iaResponse = completion.choices[0].message.content;
+    console.log("🤖 Resposta da IA:", iaResponse);
+
+    const result = await sendText(instanceId, token, clientToken, from, iaResponse);
+
+    console.log("📤 Resposta enviada Z-API:", result);
+
   } catch (error) {
     console.error("❌ Erro ao processar mensagem:", error);
   }
@@ -38,11 +65,10 @@ export async function sendText(instanceId, token, clientToken, to, msg) {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      "client-token": clientToken,   // <- AGORA NO LOCAL CORRETO!
+      "client-token": clientToken,
     },
     body: JSON.stringify(body),
   });
 
-  const result = await response.json();
-  return result;
+  return await response.json();
 }
