@@ -6,7 +6,7 @@ export async function handleIncomingMessage(data) {
     const token = process.env.ZAPI_TOKEN;
     const clientToken = process.env.ZAPI_CLIENT_TOKEN;
 
-    if (!instanceId || !token) {
+    if (!instanceId || !token || !clientToken) {
       console.error("❌ Variáveis Z-API não configuradas no Vercel!");
       return;
     }
@@ -32,13 +32,13 @@ export async function sendText(instanceId, token, clientToken, to, msg) {
   const body = {
     phone: to,
     message: msg,
-    clientToken: clientToken,  // <- obrigatório na sua instância!
   };
 
   const response = await fetch(url, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
+      "client-token": clientToken,   // <- AGORA NO LOCAL CORRETO!
     },
     body: JSON.stringify(body),
   });
