@@ -1,7 +1,6 @@
-import { NextApiRequest, NextApiResponse } from "next";
-import { handleIncomingMessage } from "../utils/ultramsg";
+import { handleIncomingMessage } from "../../utils/ultramsg";
 
-export default async function handler(req: NextApiRequest, res: NextApiResponse) {
+export default async function handler(req, res) {
   if (req.method !== "POST") {
     return res.status(405).json({ error: "Method not allowed" });
   }
