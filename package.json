@@ -1,10 +1,8 @@
 {
   "name": "martin-ia",
   "version": "1.0.0",
-  "private": true,
-  "scripts": { "start": "vercel dev" },
+  "type": "module",
   "dependencies": {
-    "axios": "^1.4.0",
-    "pdfkit": "^0.13.0"
+    "openai": "^4.0.0"
   }
 }
