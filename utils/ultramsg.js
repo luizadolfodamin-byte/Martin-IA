@@ -4,6 +4,7 @@ export async function handleIncomingMessage(data) {
 
     const instanceId = process.env.ZAPI_INSTANCE_ID;
     const token = process.env.ZAPI_TOKEN;
+    const clientToken = process.env.ZAPI_CLIENT_TOKEN;
 
     if (!instanceId || !token) {
       console.error("❌ Variáveis Z-API não configuradas no Vercel!");
@@ -16,7 +17,7 @@ export async function handleIncomingMessage(data) {
     const reply =
       "Olá! 👋 Aqui é o representante virtual Martín.\nComo posso te ajudar hoje?";
 
-    const result = await sendText(instanceId, token, from, reply);
+    const result = await sendText(instanceId, token, clientToken, from, reply);
 
     console.log("📤 Resposta da Z-API:", result);
     console.log("✅ Resposta enviada com sucesso!");
@@ -25,12 +26,13 @@ export async function handleIncomingMessage(data) {
   }
 }
 
-export async function sendText(instanceId, token, to, msg) {
+export async function sendText(instanceId, token, clientToken, to, msg) {
   const url = `https://api.z-api.io/instances/${instanceId}/token/${token}/send-text`;
 
   const body = {
     phone: to,
     message: msg,
+    clientToken: clientToken,  // <- obrigatório na sua instância!
   };
 
   const response = await fetch(url, {
@@ -44,4 +46,3 @@ export async function sendText(instanceId, token, to, msg) {
   const result = await response.json();
   return result;
 }
-
