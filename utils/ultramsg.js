@@ -1,15 +1,28 @@
-import axios from "axios";
+// Função principal que recebe mensagens do webhook e responde
+export async function handleIncomingMessage(data) {
+  try {
+    console.log("📥 Mensagem recebida do WhatsApp:", data);
 
-export function baseUrl(instanceId) {
-  return `https://api.ultramsg.com/${instanceId}`;
-}
+    const instanceId = process.env.ZAPI_INSTANCE_ID;
+    const token = process.env.ZAPI_TOKEN;
 
-export async function sendText(instanceId, token, to, message) {
-  const url = `${baseUrl(instanceId)}/messages/chat`;
-  await axios.post(url, { token, to, body: message });
-}
+    if (!instanceId || !token) {
+      console.error("❌ Variáveis Z-API não configuradas no Vercel!");
+      return;
+    }
 
-export async function sendFileBase64(instanceId, token, to, filename, base64, caption="") {
-  const url = `${baseUrl(instanceId)}/messages/file`;
-  await axios.post(url, { token, to, filename, caption, file: base64 });
+    const from = data.from; // número do remetente
+    const message = data.body; // texto da mensagem
+
+    // Resposta automática inicial
+    const reply =
+      "Olá! 👋 Aqui é o representante virtual Martín.\nComo posso te ajudar hoje?";
+
+    await sendText(instanceId, token, from, reply);
+
+    console.log("📤 Resposta enviada com sucesso!");
+
+  } catch (error) {
+    console.error("❌ Erro ao processar mensagem:", error);
+  }
 }
