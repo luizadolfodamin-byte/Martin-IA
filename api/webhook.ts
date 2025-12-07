@@ -10,18 +10,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const data = req.body;
     console.log("📩 Webhook recebido:", data);
 
-    // Enviar a mensagem recebida para o manipulador (Martín IA)
+    // Envia a mensagem recebida para o manipulador (Martín IA)
     await handleIncomingMessage(data);
 
     return res.status(200).json({ success: true });
   } catch (error) {
     console.error("Erro no webhook:", error);
     return res.status(500).json({ error: "Internal Server Error" });
-  }
-}
-
-  } catch (err) {
-    console.error(err);
-    return res.status(500).send("error");
   }
 }
