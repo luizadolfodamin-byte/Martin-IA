@@ -16,7 +16,6 @@ export async function handleIncomingMessage(data) {
     const reply =
       "Olá! 👋 Aqui é o representante virtual Martín.\nComo posso te ajudar hoje?";
 
-    // Enviar resposta
     const result = await sendText(instanceId, token, from, reply);
 
     console.log("📤 Resposta da Z-API:", result);
@@ -27,7 +26,7 @@ export async function handleIncomingMessage(data) {
 }
 
 export async function sendText(instanceId, token, to, msg) {
-  const url = `https://api.z-api.io/instances/${instanceId}/token/${token}/message/text`;
+  const url = `https://api.z-api.io/instances/${instanceId}/token/${token}/send-text`;
 
   const body = {
     phone: to,
@@ -45,3 +44,4 @@ export async function sendText(instanceId, token, to, msg) {
   const result = await response.json();
   return result;
 }
+
