@@ -8,6 +8,7 @@ export async function handleIncomingMessage(data) {
     const token = process.env.ZAPI_TOKEN;
     const clientToken = process.env.ZAPI_CLIENT_TOKEN;
     const openaiKey = process.env.OPENAI_API_KEY;
+    const assistantId = process.env.OPENAI_ASSISTANT_ID;
 
     if (!instanceId || !token || !clientToken) {
       console.error("❌ Variáveis Z-API não configuradas!");
@@ -15,37 +16,79 @@ export async function handleIncomingMessage(data) {
     }
 
     if (!openaiKey) {
-      console.error("❌ OPENAI_API_KEY não configurada no Vercel!");
+      console.error("❌ OPENAI_API_KEY não configurada!");
+      return;
+    }
+
+    if (!assistantId) {
+      console.error("❌ OPENAI_ASSISTANT_ID não configurado!");
       return;
     }
 
     const from = data.phone;
     const userMessage = data.text?.message || "";
 
-    const client = new OpenAI({ apiKey: openaiKey });
+    //
+    // ---- NOVA CHAMADA DO ASSISTANT ----
+    //
 
-    const completion = await client.chat.completions.create({
-      model: "gpt-4o-mini",
-      messages: [
+    const payload = {
+      input: [
         {
-          role: "system",
-          content: `
-Você é Martín, um representante comercial virtual educado, simpático, consultivo e profissional.
-Seu objetivo é ajudar o cliente, tirar dúvidas e oferecer soluções comerciais quando fizer sentido.
-Responda sempre de forma clara, amigável e útil.
-          `,
+          role: "user",
+          content: userMessage
+        }
+      ]
+    };
+
+    const resp = await fetch(
+      `https://api.openai.com/v1/assistants/${assistantId}/messages`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${openaiKey}`
         },
-        { role: "user", content: userMessage },
-      ],
-      max_tokens: 250,
-      temperature: 0.7,
-    });
+        body: JSON.stringify(payload)
+      }
+    );
 
-    const iaResponse = completion.choices[0].message.content;
-    console.log("🤖 Resposta da IA:", iaResponse);
+    if (!resp.ok) {
+      const txt = await resp.text();
+      console.error("❌ Erro na chamada ao Assistants:", resp.status, txt);
+      return;
+    }
 
+    const dataResp = await resp.json();
+    console.log("📥 Resposta Assistants (raw):", dataResp);
+
+    // ---- EXTRAÇÃO DE RESPOSTA ----
+    let iaResponse = "";
+
+    if (dataResp.output_text) {
+      iaResponse = dataResp.output_text;
+    } else if (Array.isArray(dataResp.output) && dataResp.output.length) {
+      iaResponse = dataResp.output
+        .map(o => {
+          if (o.content && Array.isArray(o.content)) {
+            return o.content.map(c => c.text || c).join(" ");
+          }
+          return "";
+        })
+        .filter(Boolean)
+        .join("\n");
+    } else if (dataResp.message && Array.isArray(dataResp.message.content)) {
+      iaResponse = dataResp.message.content.map(c => c.text || c).join(" ");
+    } else {
+      iaResponse = JSON.stringify(dataResp);
+    }
+
+    console.log("🤖 Resposta formatada da IA:", iaResponse);
+
+    //
+    // ---- ENVIO AO WHATSAPP ----
+    //
     const result = await sendText(instanceId, token, clientToken, from, iaResponse);
-
     console.log("📤 Resposta enviada Z-API:", result);
 
   } catch (error) {
