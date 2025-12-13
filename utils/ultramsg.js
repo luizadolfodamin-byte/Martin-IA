@@ -33,60 +33,62 @@ export async function handleIncomingMessage(data) {
       return;
     }
 
-    // ================================
-    // 🤖 CHAMADA CORRETA AO ASSISTANT
-    // ================================
+    // -----------------------------------------
+    //  🤖 NOVA API ASSISTANTS (OPENAI 2025)
+    //  usando openai.beta.threads.*
+    // -----------------------------------------
 
     const openai = new OpenAI({ apiKey: openaiKey });
 
-    // 1️⃣ Criar um thread
-    const thread = await openai.threads.create();
+    // 1️⃣ Criar thread
+    const thread = await openai.beta.threads.create();
     const threadId = thread.id;
 
-    // 2️⃣ Enviar a mensagem do usuário para o thread
-    await openai.threads.messages.create(threadId, {
+    // 2️⃣ Enviar msg do usuário
+    await openai.beta.threads.messages.create(threadId, {
       role: "user",
-      content: userMessage,
+      content: userMessage
     });
 
-    // 3️⃣ Criar o run do assistant
-    const run = await openai.threads.runs.create(threadId, {
-      assistant_id: assistantId,
+    // 3️⃣ Criar run
+    const run = await openai.beta.threads.runs.create(threadId, {
+      assistant_id: assistantId
     });
 
-    // 4️⃣ Aguardar o processamento do run
-    let runStatus;
-    do {
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      runStatus = await openai.threads.runs.retrieve(threadId, run.id);
+    // 4️⃣ Aguardar o run terminar
+    let runStatus = run;
+
+    while (runStatus.status === "queued" || runStatus.status === "in_progress") {
       console.log("⏳ Status do run:", runStatus.status);
-    } while (runStatus.status === "queued" || runStatus.status === "in_progress");
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      runStatus = await openai.beta.threads.runs.retrieve(threadId, run.id);
+    }
 
     if (runStatus.status !== "completed") {
-      console.error("❌ Run não concluído:", runStatus.status);
+      console.error("❌ Run finalizado com erro:", runStatus.status);
       return;
     }
 
-    // 5️⃣ Buscar mensagens finais do thread
-    const messages = await openai.threads.messages.list(threadId);
-    const lastMessage = messages.data.find(msg => msg.role === "assistant");
+    // 5️⃣ Ler a resposta final
+    const messages = await openai.beta.threads.messages.list(threadId);
 
-    if (!lastMessage || !lastMessage.content || !lastMessage.content.length) {
-      console.error("❌ Nenhuma resposta do assistant encontrada.");
+    const last = messages.data.find(m => m.role === "assistant");
+
+    if (!last || !last.content?.length) {
+      console.error("❌ Nenhuma resposta encontrada no Assistente.");
       return;
     }
 
-    // 6️⃣ Extrair texto da resposta
-    const iaResponse = lastMessage.content
-      .map(item => item.text?.value || "")
+    const iaResponse = last.content
+      .map(part => part.text?.value || "")
       .join("\n")
       .trim();
 
     console.log("🤖 Resposta final do Martin:", iaResponse);
 
-    // ================================
-    // 📤 ENVIO DA RESPOSTA AO WHATSAPP
-    // ================================
+    // -----------------------------------------
+    //  📤 ENVIAR AO WHATSAPP
+    // -----------------------------------------
 
     const result = await sendText(
       instanceId,
@@ -122,5 +124,4 @@ export async function sendText(instanceId, token, clientToken, to, msg) {
 
   return await response.json();
 }
-
 
