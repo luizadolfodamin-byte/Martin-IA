@@ -28,68 +28,75 @@ export async function handleIncomingMessage(data) {
     const from = data.phone;
     const userMessage = data.text?.message || "";
 
-    //
-    // ---- NOVA CHAMADA DO ASSISTANT ----
-    //
-
-    const payload = {
-      input: [
-        {
-          role: "user",
-          content: userMessage
-        }
-      ]
-    };
-
-    const resp = await fetch(
-      `https://api.openai.com/v1/assistants/${assistantId}/messages`,
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${openaiKey}`
-        },
-        body: JSON.stringify(payload)
-      }
-    );
-
-    if (!resp.ok) {
-      const txt = await resp.text();
-      console.error("❌ Erro na chamada ao Assistants:", resp.status, txt);
+    if (!userMessage) {
+      console.warn("⚠️ Mensagem vazia recebida.");
       return;
     }
 
-    const dataResp = await resp.json();
-    console.log("📥 Resposta Assistants (raw):", dataResp);
+    // ================================
+    // 🤖 CHAMADA CORRETA AO ASSISTANT
+    // ================================
 
-    // ---- EXTRAÇÃO DE RESPOSTA ----
-    let iaResponse = "";
+    const openai = new OpenAI({ apiKey: openaiKey });
 
-    if (dataResp.output_text) {
-      iaResponse = dataResp.output_text;
-    } else if (Array.isArray(dataResp.output) && dataResp.output.length) {
-      iaResponse = dataResp.output
-        .map(o => {
-          if (o.content && Array.isArray(o.content)) {
-            return o.content.map(c => c.text || c).join(" ");
-          }
-          return "";
-        })
-        .filter(Boolean)
-        .join("\n");
-    } else if (dataResp.message && Array.isArray(dataResp.message.content)) {
-      iaResponse = dataResp.message.content.map(c => c.text || c).join(" ");
-    } else {
-      iaResponse = JSON.stringify(dataResp);
+    // 1️⃣ Criar um thread
+    const thread = await openai.threads.create();
+    const threadId = thread.id;
+
+    // 2️⃣ Enviar a mensagem do usuário para o thread
+    await openai.threads.messages.create(threadId, {
+      role: "user",
+      content: userMessage,
+    });
+
+    // 3️⃣ Criar o run do assistant
+    const run = await openai.threads.runs.create(threadId, {
+      assistant_id: assistantId,
+    });
+
+    // 4️⃣ Aguardar o processamento do run
+    let runStatus;
+    do {
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      runStatus = await openai.threads.runs.retrieve(threadId, run.id);
+      console.log("⏳ Status do run:", runStatus.status);
+    } while (runStatus.status === "queued" || runStatus.status === "in_progress");
+
+    if (runStatus.status !== "completed") {
+      console.error("❌ Run não concluído:", runStatus.status);
+      return;
     }
 
-    console.log("🤖 Resposta formatada da IA:", iaResponse);
+    // 5️⃣ Buscar mensagens finais do thread
+    const messages = await openai.threads.messages.list(threadId);
+    const lastMessage = messages.data.find(msg => msg.role === "assistant");
 
-    //
-    // ---- ENVIO AO WHATSAPP ----
-    //
-    const result = await sendText(instanceId, token, clientToken, from, iaResponse);
-    console.log("📤 Resposta enviada Z-API:", result);
+    if (!lastMessage || !lastMessage.content || !lastMessage.content.length) {
+      console.error("❌ Nenhuma resposta do assistant encontrada.");
+      return;
+    }
+
+    // 6️⃣ Extrair texto da resposta
+    const iaResponse = lastMessage.content
+      .map(item => item.text?.value || "")
+      .join("\n")
+      .trim();
+
+    console.log("🤖 Resposta final do Martin:", iaResponse);
+
+    // ================================
+    // 📤 ENVIO DA RESPOSTA AO WHATSAPP
+    // ================================
+
+    const result = await sendText(
+      instanceId,
+      token,
+      clientToken,
+      from,
+      iaResponse
+    );
+
+    console.log("📤 Resposta enviada via Z-API:", result);
 
   } catch (error) {
     console.error("❌ Erro ao processar mensagem:", error);
@@ -115,3 +122,5 @@ export async function sendText(instanceId, token, clientToken, to, msg) {
 
   return await response.json();
 }
+
+
