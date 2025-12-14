@@ -39,7 +39,7 @@ export async function handleIncomingMessage(data) {
 
     const from = data.phone;
 
-    // 🔒 Lock anti-duplicidade
+    // 🔒 Evita concorrência simultânea
     if (processingLocks.has(from)) {
       console.log("🔒 Já processando este telefone.");
       return;
@@ -50,12 +50,12 @@ export async function handleIncomingMessage(data) {
     // -----------------------------------------
     let normalizedMessage = "";
 
-    // 📩 Texto simples
+    // 📩 Texto
     if (data.text?.message) {
       normalizedMessage = data.text.message.trim();
     }
 
-    // 📇 VCARD (contato real)
+    // 📇 VCARD
     else if (data.vcard || data.message?.vcard) {
       const vcard = data.vcard || data.message.vcard;
 
@@ -85,7 +85,7 @@ export async function handleIncomingMessage(data) {
     console.log("📝 Mensagem normalizada:", normalizedMessage);
 
     // -----------------------------------------
-    // 🧺 DEBOUNCE
+    // 🧺 BUFFER (DEBOUNCE)
     // -----------------------------------------
     if (!messageBuffers.has(from)) {
       messageBuffers.set(from, []);
@@ -99,13 +99,13 @@ export async function handleIncomingMessage(data) {
     const messages = messageBuffers.get(from) || [];
     messageBuffers.delete(from);
 
- const combinedMessage = messages.join("\n");
+    const combinedMessage = `
+MENSAGENS DO CLIENTE (em ordem):
 
-MENSAGENS DO CLIENTE:
 ${messages.join("\n")}
 `.trim();
 
-    console.log("🧠 Mensagem combinada:", combinedMessage);
+    console.log("🧠 Mensagem combinada enviada ao Martin:", combinedMessage);
 
     // -----------------------------------------
     // 🤖 OPENAI ASSISTANT
@@ -143,7 +143,7 @@ ${messages.join("\n")}
 
     const messagesList = await openai.beta.threads.messages.list(threadId);
 
-    // ✅ CORREÇÃO CRÍTICA: pega a ÚLTIMA resposta do assistant
+    // ✅ Pega a ÚLTIMA resposta do assistant
     const last = messagesList.data
       .slice()
       .reverse()
