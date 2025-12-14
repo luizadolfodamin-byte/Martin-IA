@@ -99,7 +99,17 @@ export async function handleIncomingMessage(data) {
     const messages = messageBuffers.get(from) || [];
     messageBuffers.delete(from);
 
-    const combinedMessage = messages.join("\n");
+    const combinedMessage = `
+CONTEXTO DA CONVERSA (IMPORTANTE):
+- NÃO repetir a apresentação inicial.
+- O cliente JÁ respondeu sobre quem é o responsável pelas compras.
+- Se houver pergunta sobre produtos, RESPONDER diretamente.
+- Considerar TODAS as mensagens abaixo como um único contexto.
+
+MENSAGENS DO CLIENTE:
+${messages.join("\n")}
+`.trim();
+
     console.log("🧠 Mensagem combinada:", combinedMessage);
 
     // -----------------------------------------
