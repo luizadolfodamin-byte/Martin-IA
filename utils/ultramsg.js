@@ -3,6 +3,17 @@ import OpenAI from "openai";
 export async function handleIncomingMessage(data) {
   try {
     console.log("📩 Mensagem recebida do WhatsApp:", data);
+        // 🔒 FILTRO PARA EVITAR RESPOSTA DUPLICADA
+    if (
+      data.fromMe === true ||
+      data.isStatusReply === true ||
+      data.isEdit === true ||
+      data.status !== "RECEIVED"
+    ) {
+      console.log("⏭️ Evento ignorado para evitar duplicidade.");
+      return;
+    }
+
 
     const instanceId = process.env.ZAPI_INSTANCE_ID;
     const token = process.env.ZAPI_TOKEN;
