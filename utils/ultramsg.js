@@ -1,30 +1,26 @@
-
 import OpenAI from "openai";
 
-// 🧠 Memória simples de conversas por telefone
+// 🧠 Memória simples de conversas por telefone (thread por contato)
 const conversationThreads = new Map();
 
-// 🧺 Buffer de mensagens por telefone (debounce)
+// 🧺 Buffer de mensagens por telefone (debounce curto)
 const messageBuffers = new Map();
 
-// ⏱️ Timers de resposta por telefone
-const responseTimers = new Map();
-
-// ⏲️ Tempo de espera antes de responder (ms)
-const DEBOUNCE_TIME = 30000; // 30 segundos
+// ⏱️ Tempo de espera síncrono (serverless safe)
+const DEBOUNCE_TIME = 5000; // 5 segundos
 
 export async function handleIncomingMessage(data) {
   try {
     console.log("📩 Mensagem recebida do WhatsApp:", data);
 
-    // 🔒 FILTRO PARA EVITAR RESPOSTA DUPLICADA / EVENTOS INVÁLIDOS
+    // 🔒 FILTRO PARA EVITAR DUPLICIDADE / EVENTOS INVÁLIDOS
     if (
       data.fromMe === true ||
       data.isStatusReply === true ||
       data.isEdit === true ||
       data.status !== "RECEIVED"
     ) {
-      console.log("⏭️ Evento ignorado para evitar duplicidade.");
+      console.log("⏭️ Evento ignorado.");
       return;
     }
 
@@ -50,7 +46,7 @@ export async function handleIncomingMessage(data) {
     const from = data.phone;
 
     // -----------------------------------------
-    // 🧠 NORMALIZAÇÃO DA MENSAGEM (texto/contato)
+    // 🧠 NORMALIZAÇÃO DA MENSAGEM (texto ou contato)
     // -----------------------------------------
     let normalizedMessage = "";
 
@@ -60,19 +56,16 @@ export async function handleIncomingMessage(data) {
     }
     // 📇 Contato (formato direto)
     else if (data.contact) {
-      const name = data.contact.name || "Nome não informado";
-      const phone = data.contact.phone || "Telefone não informado";
-      normalizedMessage = `Contato enviado:\nNome: ${name}\nTelefone: ${phone}`;
+      normalizedMessage = `Contato enviado:
+Nome: ${data.contact.name || "Não informado"}
+Telefone: ${data.contact.phone || "Não informado"}`;
     }
     // 📇 Contato (lista)
     else if (Array.isArray(data.contacts) && data.contacts.length > 0) {
       const c = data.contacts[0];
-      const name = c.name || "Nome não informado";
-      const phone =
-        Array.isArray(c.phones) && c.phones.length > 0
-          ? c.phones[0]
-          : "Telefone não informado";
-      normalizedMessage = `Contato enviado:\nNome: ${name}\nTelefone: ${phone}`;
+      normalizedMessage = `Contato enviado:
+Nome: ${c.name || "Não informado"}
+Telefone: ${c.phones?.[0] || "Não informado"}`;
     }
 
     if (!normalizedMessage) {
@@ -83,7 +76,7 @@ export async function handleIncomingMessage(data) {
     console.log("📝 Mensagem normalizada:", normalizedMessage);
 
     // -----------------------------------------
-    // 🧺 DEBOUNCE: acumula mensagens do cliente
+    // 🧺 BUFFER + DEBOUNCE SÍNCRONO
     // -----------------------------------------
     if (!messageBuffers.has(from)) {
       messageBuffers.set(from, []);
@@ -91,122 +84,93 @@ export async function handleIncomingMessage(data) {
 
     messageBuffers.get(from).push(normalizedMessage);
 
-    // Se já existe um timer, reinicia
-    if (responseTimers.has(from)) {
-      clearTimeout(responseTimers.get(from));
+    // Aguarda pequenas mensagens em sequência (comportamento humano)
+    await new Promise((resolve) => setTimeout(resolve, DEBOUNCE_TIME));
+
+    const messages = messageBuffers.get(from);
+    messageBuffers.delete(from);
+
+    if (!messages || messages.length === 0) {
+      return;
     }
 
-    // Cria novo timer
-    const timer = setTimeout(async () => {
-      try {
-        const messages = messageBuffers.get(from) || [];
-        messageBuffers.delete(from);
-        responseTimers.delete(from);
+    const combinedMessage = messages.join("\n");
+    console.log("🧠 Mensagem combinada para o Martin:", combinedMessage);
 
-        const combinedMessage = messages.join("\n");
-        console.log("🧠 Mensagem combinada para o Martin:", combinedMessage);
+    // -----------------------------------------
+    // 🤖 OPENAI ASSISTANTS (THREAD COM MEMÓRIA)
+    // -----------------------------------------
+    const openai = new OpenAI({ apiKey: openaiKey });
 
-        // -----------------------------------------
-        // 🤖 OPENAI ASSISTANTS (THREAD COM MEMÓRIA)
-        // -----------------------------------------
-        const openai = new OpenAI({ apiKey: openaiKey });
+    let threadId;
+    if (conversationThreads.has(from)) {
+      threadId = conversationThreads.get(from);
+      console.log("🧠 Reutilizando thread:", threadId);
+    } else {
+      const thread = await openai.beta.threads.create();
+      threadId = thread.id;
+      conversationThreads.set(from, threadId);
+      console.log("🆕 Thread criado:", threadId);
+    }
 
-        // 🔁 Recupera ou cria thread por telefone
-        let threadId;
-        if (conversationThreads.has(from)) {
-          threadId = conversationThreads.get(from);
-          console.log("🧠 Reutilizando thread:", threadId);
-        } else {
-          const thread = await openai.beta.threads.create();
-          threadId = thread.id;
-          conversationThreads.set(from, threadId);
-          console.log("🆕 Thread criado:", threadId);
-        }
+    await openai.beta.threads.messages.create(threadId, {
+      role: "user",
+      content: combinedMessage,
+    });
 
-        // Envia mensagem combinada
-        await openai.beta.threads.messages.create(threadId, {
-          role: "user",
-          content: combinedMessage,
-        });
+    const run = await openai.beta.threads.runs.create(threadId, {
+      assistant_id: assistantId,
+    });
 
-        // Cria run
-        const run = await openai.beta.threads.runs.create(threadId, {
-          assistant_id: assistantId,
-        });
+    let runStatus = run;
+    while (runStatus.status === "queued" || runStatus.status === "in_progress") {
+      await new Promise((r) => setTimeout(r, 1000));
+      runStatus = await openai.beta.threads.runs.retrieve(threadId, run.id);
+    }
 
-        // Aguarda run
-        let runStatus = run;
-        while (
-          runStatus.status === "queued" ||
-          runStatus.status === "in_progress"
-        ) {
-          console.log("⏳ Status do run:", runStatus.status);
-          await new Promise((resolve) => setTimeout(resolve, 1000));
-          runStatus = await openai.beta.threads.runs.retrieve(threadId, run.id);
-        }
+    if (runStatus.status !== "completed") {
+      console.error("❌ Run finalizado com erro:", runStatus.status);
+      return;
+    }
 
-        if (runStatus.status !== "completed") {
-          console.error("❌ Run finalizado com erro:", runStatus.status);
-          return;
-        }
+    const list = await openai.beta.threads.messages.list(threadId);
+    const last = list.data.find((m) => m.role === "assistant");
 
-        // Lê resposta final
-        const messagesList = await openai.beta.threads.messages.list(threadId);
-        const last = messagesList.data.find(
-          (m) => m.role === "assistant"
-        );
+    if (!last || !last.content?.length) {
+      console.error("❌ Nenhuma resposta do assistente.");
+      return;
+    }
 
-        if (!last || !last.content?.length) {
-          console.error("❌ Nenhuma resposta encontrada no Assistente.");
-          return;
-        }
+    const iaResponse = last.content
+      .map((p) => p.text?.value || "")
+      .join("\n")
+      .trim();
 
-        const iaResponse = last.content
-          .map((part) => part.text?.value || "")
-          .join("\n")
-          .trim();
+    console.log("🤖 Resposta final do Martin:", iaResponse);
 
-        console.log("🤖 Resposta final do Martin:", iaResponse);
+    // -----------------------------------------
+    // 📤 ENVIO AO WHATSAPP
+    // -----------------------------------------
+    await sendText(instanceId, token, clientToken, from, iaResponse);
 
-        // -----------------------------------------
-        // 📤 ENVIO AO WHATSAPP
-        // -----------------------------------------
-        const result = await sendText(
-          instanceId,
-          token,
-          clientToken,
-          from,
-          iaResponse
-        );
-
-        console.log("📤 Resposta enviada via Z-API:", result);
-      } catch (err) {
-        console.error("❌ Erro no processamento pós-debounce:", err);
-      }
-    }, DEBOUNCE_TIME);
-
-    responseTimers.set(from, timer);
-  } catch (error) {
-    console.error("❌ Erro ao processar mensagem:", error);
+  } catch (err) {
+    console.error("❌ Erro ao processar mensagem:", err);
   }
 }
 
 export async function sendText(instanceId, token, clientToken, to, msg) {
   const url = `https://api.z-api.io/instances/${instanceId}/token/${token}/send-text`;
 
-  const body = {
-    phone: to,
-    message: msg,
-  };
-
-  const response = await fetch(url, {
+  await fetch(url, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       "client-token": clientToken,
     },
-    body: JSON.stringify(body),
+    body: JSON.stringify({
+      phone: to,
+      message: msg,
+    }),
   });
-
-  return await response.json();
 }
+
