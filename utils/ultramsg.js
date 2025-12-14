@@ -137,7 +137,12 @@ export async function handleIncomingMessage(data) {
     }
 
     const messagesList = await openai.beta.threads.messages.list(threadId);
-    const last = messagesList.data.find((m) => m.role === "assistant");
+
+    // ✅ CORREÇÃO CRÍTICA: pega a ÚLTIMA resposta do assistant
+    const last = messagesList.data
+      .slice()
+      .reverse()
+      .find((m) => m.role === "assistant");
 
     if (!last || !last.content?.length) {
       processingLocks.delete(from);
@@ -172,3 +177,4 @@ export async function sendText(instanceId, token, clientToken, to, msg) {
     body: JSON.stringify({ phone: to, message: msg }),
   }).then((r) => r.json());
 }
+
