@@ -41,12 +41,49 @@ export async function handleIncomingMessage(data) {
     }
 
     const from = data.phone;
-    const userMessage = data.text?.message || "";
+
+    // -----------------------------------------
+    // 🧠 NORMALIZAÇÃO DA MENSAGEM DO USUÁRIO
+    // (texto OU contato)
+    // -----------------------------------------
+
+    let userMessage = "";
+
+    // 📩 Texto normal
+    if (data.text?.message) {
+      userMessage = data.text.message;
+    }
+
+    // 📇 Contato enviado (formato direto)
+    else if (data.contact) {
+      const name = data.contact.name || "Nome não informado";
+      const phone = data.contact.phone || "Telefone não informado";
+
+      userMessage = `Contato enviado:
+Nome: ${name}
+Telefone: ${phone}`;
+    }
+
+    // 📇 Contato enviado (lista de contatos)
+    else if (Array.isArray(data.contacts) && data.contacts.length > 0) {
+      const c = data.contacts[0];
+      const name = c.name || "Nome não informado";
+      const phone =
+        Array.isArray(c.phones) && c.phones.length > 0
+          ? c.phones[0]
+          : "Telefone não informado";
+
+      userMessage = `Contato enviado:
+Nome: ${name}
+Telefone: ${phone}`;
+    }
 
     if (!userMessage) {
-      console.warn("⚠️ Mensagem vazia recebida.");
+      console.warn("⚠️ Mensagem vazia ou não reconhecida.");
       return;
     }
+
+    console.log("📝 Mensagem normalizada para o Martin:", userMessage);
 
     // -----------------------------------------
     // 🤖 OPENAI ASSISTANTS (THREAD COM MEMÓRIA)
