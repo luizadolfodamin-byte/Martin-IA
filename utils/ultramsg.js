@@ -1,9 +1,14 @@
 import OpenAI from "openai";
 
+// 🧠 Memória simples de conversas por telefone
+// (suficiente para esta fase; depois pode virar Redis/DB)
+const conversationThreads = new Map();
+
 export async function handleIncomingMessage(data) {
   try {
     console.log("📩 Mensagem recebida do WhatsApp:", data);
-        // 🔒 FILTRO PARA EVITAR RESPOSTA DUPLICADA
+
+    // 🔒 FILTRO PARA EVITAR RESPOSTA DUPLICADA
     if (
       data.fromMe === true ||
       data.isStatusReply === true ||
@@ -13,7 +18,6 @@ export async function handleIncomingMessage(data) {
       console.log("⏭️ Evento ignorado para evitar duplicidade.");
       return;
     }
-
 
     const instanceId = process.env.ZAPI_INSTANCE_ID;
     const token = process.env.ZAPI_TOKEN;
@@ -45,33 +49,41 @@ export async function handleIncomingMessage(data) {
     }
 
     // -----------------------------------------
-    //  🤖 NOVA API ASSISTANTS (OPENAI 2025)
-    //  usando openai.beta.threads.*
+    // 🤖 OPENAI ASSISTANTS (THREAD COM MEMÓRIA)
     // -----------------------------------------
 
     const openai = new OpenAI({ apiKey: openaiKey });
 
-    // 1️⃣ Criar thread
-    const thread = await openai.beta.threads.create();
-    const threadId = thread.id;
+    // 🔁 Recupera ou cria thread por telefone
+    let threadId;
 
-    // 2️⃣ Enviar msg do usuário
+    if (conversationThreads.has(from)) {
+      threadId = conversationThreads.get(from);
+      console.log("🧠 Reutilizando thread existente:", threadId);
+    } else {
+      const thread = await openai.beta.threads.create();
+      threadId = thread.id;
+      conversationThreads.set(from, threadId);
+      console.log("🆕 Thread criado para o telefone:", threadId);
+    }
+
+    // 1️⃣ Enviar mensagem do usuário ao thread
     await openai.beta.threads.messages.create(threadId, {
       role: "user",
-      content: userMessage
+      content: userMessage,
     });
 
-    // 3️⃣ Criar run
+    // 2️⃣ Criar run do assistant
     const run = await openai.beta.threads.runs.create(threadId, {
-      assistant_id: assistantId
+      assistant_id: assistantId,
     });
 
-    // 4️⃣ Aguardar o run terminar
+    // 3️⃣ Aguardar o run terminar
     let runStatus = run;
 
     while (runStatus.status === "queued" || runStatus.status === "in_progress") {
       console.log("⏳ Status do run:", runStatus.status);
-      await new Promise(resolve => setTimeout(resolve, 1000));
+      await new Promise((resolve) => setTimeout(resolve, 1000));
       runStatus = await openai.beta.threads.runs.retrieve(threadId, run.id);
     }
 
@@ -80,10 +92,9 @@ export async function handleIncomingMessage(data) {
       return;
     }
 
-    // 5️⃣ Ler a resposta final
+    // 4️⃣ Ler a resposta final do assistant
     const messages = await openai.beta.threads.messages.list(threadId);
-
-    const last = messages.data.find(m => m.role === "assistant");
+    const last = messages.data.find((m) => m.role === "assistant");
 
     if (!last || !last.content?.length) {
       console.error("❌ Nenhuma resposta encontrada no Assistente.");
@@ -91,14 +102,14 @@ export async function handleIncomingMessage(data) {
     }
 
     const iaResponse = last.content
-      .map(part => part.text?.value || "")
+      .map((part) => part.text?.value || "")
       .join("\n")
       .trim();
 
     console.log("🤖 Resposta final do Martin:", iaResponse);
 
     // -----------------------------------------
-    //  📤 ENVIAR AO WHATSAPP
+    // 📤 ENVIAR AO WHATSAPP
     // -----------------------------------------
 
     const result = await sendText(
@@ -110,7 +121,6 @@ export async function handleIncomingMessage(data) {
     );
 
     console.log("📤 Resposta enviada via Z-API:", result);
-
   } catch (error) {
     console.error("❌ Erro ao processar mensagem:", error);
   }
