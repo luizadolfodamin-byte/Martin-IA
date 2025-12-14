@@ -1,26 +1,29 @@
 import OpenAI from "openai";
 
-// 🧠 Memória simples de conversas por telefone (thread por contato)
+// 🧠 Memória de threads por telefone
 const conversationThreads = new Map();
 
-// 🧺 Buffer de mensagens por telefone (debounce curto)
+// 🧺 Buffer temporário de mensagens por telefone
 const messageBuffers = new Map();
 
-// ⏱️ Tempo de espera síncrono (serverless safe)
-const DEBOUNCE_TIME = 5000; // 5 segundos
+// 🔒 Lock para evitar concorrência / duplicidade
+const processingLocks = new Set();
+
+// ⏱️ Tempo de debounce (ms) — humano e seguro p/ Vercel
+const DEBOUNCE_TIME = 5000;
 
 export async function handleIncomingMessage(data) {
   try {
     console.log("📩 Mensagem recebida do WhatsApp:", data);
 
-    // 🔒 FILTRO PARA EVITAR DUPLICIDADE / EVENTOS INVÁLIDOS
+    // 🔒 FILTRO DE EVENTOS INVÁLIDOS / DUPLICADOS
     if (
       data.fromMe === true ||
       data.isStatusReply === true ||
       data.isEdit === true ||
       data.status !== "RECEIVED"
     ) {
-      console.log("⏭️ Evento ignorado.");
+      console.log("⏭️ Evento ignorado (filtro inicial).");
       return;
     }
 
@@ -45,27 +48,36 @@ export async function handleIncomingMessage(data) {
 
     const from = data.phone;
 
+    // 🔒 LOCK POR TELEFONE (ANTI-DUPLICIDADE DEFINITIVO)
+    if (processingLocks.has(from)) {
+      console.log("🔒 Já processando este telefone. Ignorando novo evento.");
+      return;
+    }
+
     // -----------------------------------------
-    // 🧠 NORMALIZAÇÃO DA MENSAGEM (texto ou contato)
+    // 🧠 NORMALIZAÇÃO DA MENSAGEM
     // -----------------------------------------
     let normalizedMessage = "";
 
-    // 📩 Texto
+    // 📩 Texto simples
     if (data.text?.message) {
-      normalizedMessage = data.text.message;
+      normalizedMessage = data.text.message.trim();
     }
-    // 📇 Contato (formato direto)
+    // 📇 Contato único
     else if (data.contact) {
-      normalizedMessage = `Contato enviado:
-Nome: ${data.contact.name || "Não informado"}
-Telefone: ${data.contact.phone || "Não informado"}`;
+      const name = data.contact.name || "Nome não informado";
+      const phone = data.contact.phone || "Telefone não informado";
+      normalizedMessage = `Contato enviado:\nNome: ${name}\nTelefone: ${phone}`;
     }
-    // 📇 Contato (lista)
+    // 📇 Lista de contatos
     else if (Array.isArray(data.contacts) && data.contacts.length > 0) {
       const c = data.contacts[0];
-      normalizedMessage = `Contato enviado:
-Nome: ${c.name || "Não informado"}
-Telefone: ${c.phones?.[0] || "Não informado"}`;
+      const name = c.name || "Nome não informado";
+      const phone =
+        Array.isArray(c.phones) && c.phones.length > 0
+          ? c.phones[0]
+          : "Telefone não informado";
+      normalizedMessage = `Contato enviado:\nNome: ${name}\nTelefone: ${phone}`;
     }
 
     if (!normalizedMessage) {
@@ -76,7 +88,7 @@ Telefone: ${c.phones?.[0] || "Não informado"}`;
     console.log("📝 Mensagem normalizada:", normalizedMessage);
 
     // -----------------------------------------
-    // 🧺 BUFFER + DEBOUNCE SÍNCRONO
+    // 🧺 DEBOUNCE — ACUMULA MENSAGENS
     // -----------------------------------------
     if (!messageBuffers.has(from)) {
       messageBuffers.set(from, []);
@@ -84,18 +96,17 @@ Telefone: ${c.phones?.[0] || "Não informado"}`;
 
     messageBuffers.get(from).push(normalizedMessage);
 
-    // Aguarda pequenas mensagens em sequência (comportamento humano)
+    // Marca lock
+    processingLocks.add(from);
+
+    // Aguarda tempo humano
     await new Promise((resolve) => setTimeout(resolve, DEBOUNCE_TIME));
 
-    const messages = messageBuffers.get(from);
+    const messages = messageBuffers.get(from) || [];
     messageBuffers.delete(from);
 
-    if (!messages || messages.length === 0) {
-      return;
-    }
-
     const combinedMessage = messages.join("\n");
-    console.log("🧠 Mensagem combinada para o Martin:", combinedMessage);
+    console.log("🧠 Mensagem combinada:", combinedMessage);
 
     // -----------------------------------------
     // 🤖 OPENAI ASSISTANTS (THREAD COM MEMÓRIA)
@@ -113,36 +124,42 @@ Telefone: ${c.phones?.[0] || "Não informado"}`;
       console.log("🆕 Thread criado:", threadId);
     }
 
+    // Envia mensagem combinada
     await openai.beta.threads.messages.create(threadId, {
       role: "user",
       content: combinedMessage,
     });
 
+    // Cria run
     const run = await openai.beta.threads.runs.create(threadId, {
       assistant_id: assistantId,
     });
 
+    // Aguarda run finalizar
     let runStatus = run;
     while (runStatus.status === "queued" || runStatus.status === "in_progress") {
-      await new Promise((r) => setTimeout(r, 1000));
+      await new Promise((resolve) => setTimeout(resolve, 1000));
       runStatus = await openai.beta.threads.runs.retrieve(threadId, run.id);
     }
 
     if (runStatus.status !== "completed") {
       console.error("❌ Run finalizado com erro:", runStatus.status);
+      processingLocks.delete(from);
       return;
     }
 
-    const list = await openai.beta.threads.messages.list(threadId);
-    const last = list.data.find((m) => m.role === "assistant");
+    // Lê resposta do assistant
+    const messagesList = await openai.beta.threads.messages.list(threadId);
+    const last = messagesList.data.find((m) => m.role === "assistant");
 
     if (!last || !last.content?.length) {
-      console.error("❌ Nenhuma resposta do assistente.");
+      console.error("❌ Nenhuma resposta do assistant.");
+      processingLocks.delete(from);
       return;
     }
 
     const iaResponse = last.content
-      .map((p) => p.text?.value || "")
+      .map((part) => part.text?.value || "")
       .join("\n")
       .trim();
 
@@ -151,26 +168,40 @@ Telefone: ${c.phones?.[0] || "Não informado"}`;
     // -----------------------------------------
     // 📤 ENVIO AO WHATSAPP
     // -----------------------------------------
-    await sendText(instanceId, token, clientToken, from, iaResponse);
+    const result = await sendText(
+      instanceId,
+      token,
+      clientToken,
+      from,
+      iaResponse
+    );
 
-  } catch (err) {
-    console.error("❌ Erro ao processar mensagem:", err);
+    console.log("📤 Resposta enviada via Z-API:", result);
+
+    // 🔓 Libera lock
+    processingLocks.delete(from);
+
+  } catch (error) {
+    console.error("❌ Erro ao processar mensagem:", error);
   }
 }
 
 export async function sendText(instanceId, token, clientToken, to, msg) {
   const url = `https://api.z-api.io/instances/${instanceId}/token/${token}/send-text`;
 
-  await fetch(url, {
+  const body = {
+    phone: to,
+    message: msg,
+  };
+
+  const response = await fetch(url, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       "client-token": clientToken,
     },
-    body: JSON.stringify({
-      phone: to,
-      message: msg,
-    }),
+    body: JSON.stringify(body),
   });
-}
 
+  return await response.json();
+}
