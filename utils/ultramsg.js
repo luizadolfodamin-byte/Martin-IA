@@ -1,28 +1,28 @@
 import OpenAI from "openai";
 
-// 🧠 Thread fixa por telefone (espelho do Playground)
+// 🧠 Memória nativa do Assistant (thread por telefone)
 const conversationThreads = new Map();
 
-// 🔁 Deduplicação simples por messageId
+// 🔁 Deduplicação técnica por messageId
 const processedMessages = new Set();
 
 export async function handleIncomingMessage(data) {
   try {
     console.log("📩 Webhook recebido:", data);
 
-    // 🔒 Filtros técnicos (não cognitivos)
+    // 🔒 Filtros técnicos (somente eventos válidos)
     if (
-      data.fromMe ||
-      data.isStatusReply ||
-      data.isEdit ||
+      data.fromMe === true ||
+      data.isStatusReply === true ||
+      data.isEdit === true ||
       data.status !== "RECEIVED"
     ) {
       return;
     }
 
-    // 🔁 Deduplicação por messageId
+    // 🔁 Evita processar o mesmo evento duas vezes
     if (processedMessages.has(data.messageId)) {
-      console.log("🔁 Mensagem duplicada ignorada:", data.messageId);
+      console.log("🔁 Evento duplicado ignorado:", data.messageId);
       return;
     }
     processedMessages.add(data.messageId);
@@ -34,9 +34,6 @@ export async function handleIncomingMessage(data) {
       OPENAI_API_KEY,
       OPENAI_ASSISTANT_ID,
     } = process.env;
-
-    // 🔍 LOG CRÍTICO PARA TESTE
-    console.log("🧠 Assistant ID em uso no backend:", OPENAI_ASSISTANT_ID);
 
     if (
       !ZAPI_INSTANCE_ID ||
@@ -51,10 +48,10 @@ export async function handleIncomingMessage(data) {
 
     const from = data.phone;
 
-    // 🧠 Texto CRU do cliente (espelho do Playground)
+    // 🧠 Texto CRU do cliente (sem tratamento cognitivo)
     const userMessage = data.text?.message?.trim();
     if (!userMessage) {
-      console.warn("⚠️ Mensagem sem texto.");
+      console.warn("⚠️ Mensagem sem texto ignorada.");
       return;
     }
 
@@ -63,7 +60,7 @@ export async function handleIncomingMessage(data) {
     // 🤖 OpenAI
     const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
 
-    // 🔗 Thread fixa por telefone
+    // 🔗 Thread fixa por telefone (memória real)
     let threadId;
     if (conversationThreads.has(from)) {
       threadId = conversationThreads.get(from);
@@ -85,15 +82,15 @@ export async function handleIncomingMessage(data) {
       assistant_id: OPENAI_ASSISTANT_ID,
     });
 
-    // ⏳ Aguarda processamento
+    // ⏳ Aguarda o processamento do modelo
     let runStatus = run;
     while (runStatus.status === "queued" || runStatus.status === "in_progress") {
-      await new Promise((r) => setTimeout(r, 1000));
+      await new Promise((r) => setTimeout(r, 800));
       runStatus = await openai.beta.threads.runs.retrieve(threadId, run.id);
     }
 
     if (runStatus.status !== "completed") {
-      console.error("❌ Run não finalizado:", runStatus.status);
+      console.error("❌ Run não concluído:", runStatus.status);
       return;
     }
 
@@ -116,7 +113,7 @@ export async function handleIncomingMessage(data) {
 
     console.log("🤖 Resposta do Martin:", assistantReply);
 
-    // 📲 Envia exatamente a resposta do Assistant
+    // 📲 Envia exatamente o que o Assistant respondeu
     await sendText(
       ZAPI_INSTANCE_ID,
       ZAPI_TOKEN,
