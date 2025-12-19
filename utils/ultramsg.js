@@ -1,16 +1,15 @@
 import OpenAI from "openai";
 
-// 🧠 Thread fixa por telefone (espelho do Playground)
+// 🧠 Thread fixa por telefone
 const conversationThreads = new Map();
 
-// 🔁 Deduplicação simples por messageId
+// 🔁 Deduplicação por messageId
 const processedMessages = new Set();
 
 export async function handleIncomingMessage(data) {
   try {
     console.log("📩 Webhook recebido:", data);
 
-    // 🔒 Filtros técnicos
     if (
       data.fromMe === true ||
       data.isStatusReply === true ||
@@ -20,7 +19,6 @@ export async function handleIncomingMessage(data) {
       return;
     }
 
-    // 🔁 Deduplicação por messageId
     if (processedMessages.has(data.messageId)) {
       console.log("🔁 Mensagem duplicada ignorada:", data.messageId);
       return;
@@ -47,9 +45,8 @@ export async function handleIncomingMessage(data) {
     }
 
     const from = data.phone;
-
-    // 🧠 Texto CRU do cliente
     const userMessage = data.text?.message?.trim();
+
     if (!userMessage) {
       console.warn("⚠️ Mensagem sem texto.");
       return;
@@ -57,10 +54,8 @@ export async function handleIncomingMessage(data) {
 
     console.log("📝 Mensagem do cliente:", userMessage);
 
-    // 🤖 OpenAI
     const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
 
-    // 🔗 Thread fixa por telefone
     let threadId;
     let isNewThread = false;
 
@@ -74,33 +69,29 @@ export async function handleIncomingMessage(data) {
       console.log("🆕 Thread criada:", threadId);
     }
 
-    /**
-     * 🔑 CORREÇÃO CRÍTICA
-     * Injeta UMA mensagem de sistema apenas na criação da thread
-     * Isso simula o comportamento do Assistant Playground
-     */
+    // ✅ CONTEXTO INICIAL (workaround correto da Assistants API)
     if (isNewThread) {
       await openai.beta.threads.messages.create(threadId, {
-        role: "system",
+        role: "user",
         content:
-          "Esta é uma conversa ativa com um cliente humano via WhatsApp. " +
-          "Responda sempre primeiro ao que o cliente perguntar. " +
-          "Depois conduza a conversa de forma natural conforme seu papel.",
+          "[CONTEXTO DO SISTEMA]\n" +
+          "Esta é uma conversa ativa com um cliente humano via WhatsApp.\n" +
+          "Responda sempre primeiro ao que o cliente perguntar.\n" +
+          "Depois conduza a conversa de forma natural conforme seu papel.\n" +
+          "[FIM DO CONTEXTO]",
       });
     }
 
-    // ➡️ Envia exatamente o que o cliente escreveu
+    // ➡️ Mensagem real do cliente
     await openai.beta.threads.messages.create(threadId, {
       role: "user",
       content: userMessage,
     });
 
-    // ▶️ Executa o Assistant
     const run = await openai.beta.threads.runs.create(threadId, {
       assistant_id: OPENAI_ASSISTANT_ID,
     });
 
-    // ⏳ Aguarda processamento
     let runStatus = run;
     while (runStatus.status === "queued" || runStatus.status === "in_progress") {
       await new Promise((r) => setTimeout(r, 1000));
@@ -112,7 +103,6 @@ export async function handleIncomingMessage(data) {
       return;
     }
 
-    // 📥 Última resposta do Assistant
     const messages = await openai.beta.threads.messages.list(threadId);
     const lastAssistantMessage = messages.data
       .slice()
@@ -131,7 +121,6 @@ export async function handleIncomingMessage(data) {
 
     console.log("🤖 Resposta do Martin:", assistantReply);
 
-    // 📤 Envia exatamente a resposta do Assistant
     await sendText(
       ZAPI_INSTANCE_ID,
       ZAPI_TOKEN,
@@ -154,9 +143,6 @@ export async function sendText(instanceId, token, clientToken, to, msg) {
       "Content-Type": "application/json",
       "client-token": clientToken,
     },
-    body: JSON.stringify({
-      phone: to,
-      message: msg,
-    }),
+    body: JSON.stringify({ phone: to, message: msg }),
   }).then((r) => r.json());
 }
