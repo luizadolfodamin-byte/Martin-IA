@@ -1,29 +1,25 @@
 import OpenAI from "openai";
 
-// 🧠 Thread por telefone (memória da conversa)
+// 🧠 Thread por telefone
 const conversationThreads = new Map();
 
-// 🧠 Estado da conversa por telefone
-const conversationState = new Map();
-
-// 🧺 Buffer de mensagens por telefone
+// 🧠 Buffer por telefone
 const messageBuffers = new Map();
 
-// ⏱️ Timers de debounce por telefone
-const responseTimers = new Map();
+// ⏱️ Último timestamp de mensagem
+const lastMessageAt = new Map();
 
-// ⏲️ Tempo humano de espera (30s)
-const DEBOUNCE_TIME = 30000;
+// ⏱️ Janela humana (em ms)
+const HUMAN_WINDOW = 30000;
 
 export async function handleIncomingMessage(data) {
   try {
     console.log("📩 Webhook recebido:", data);
 
-    // 🔒 Filtro de eventos inválidos
     if (
-      data.fromMe === true ||
-      data.isStatusReply === true ||
-      data.isEdit === true ||
+      data.fromMe ||
+      data.isStatusReply ||
+      data.isEdit ||
       data.status !== "RECEIVED"
     ) {
       return;
@@ -50,169 +46,85 @@ export async function handleIncomingMessage(data) {
 
     const from = data.phone;
 
-    // -----------------------------------------
-    // 🧠 NORMALIZAÇÃO DA MENSAGEM
-    // -----------------------------------------
+    // 🧠 Normalização
     let normalizedMessage = "";
 
-    // Texto
     if (data.text?.message) {
       normalizedMessage = data.text.message.trim();
     }
 
-    // VCARD
-    else if (data.vcard || data.message?.vcard) {
-      const vcard = data.vcard || data.message.vcard;
-      const name = vcard.match(/FN:(.*)/)?.[1] || "Nome não informado";
-      const phone = vcard.match(/TEL;?.*:(.*)/)?.[1] || "Telefone não informado";
-      normalizedMessage = `Contato enviado:\nNome: ${name}\nTelefone: ${phone}`;
-    }
-
-    if (!normalizedMessage) {
-      console.warn("⚠️ Mensagem não reconhecida.");
-      return;
-    }
+    if (!normalizedMessage) return;
 
     console.log("📝 Mensagem normalizada:", normalizedMessage);
 
-    // -----------------------------------------
-    // 🧺 BUFFER + DEBOUNCE (SEM LOCK)
-    // -----------------------------------------
+    // 🧺 Buffer
     if (!messageBuffers.has(from)) {
       messageBuffers.set(from, []);
     }
 
     messageBuffers.get(from).push(normalizedMessage);
+    lastMessageAt.set(from, Date.now());
 
-    // Se já existe timer, reseta
-    if (responseTimers.has(from)) {
-      clearTimeout(responseTimers.get(from));
+    // ⏳ Se ainda está dentro da janela humana, NÃO responde
+    const now = Date.now();
+    if (now - lastMessageAt.get(from) < HUMAN_WINDOW) {
+      console.log("⏳ Aguardando mais mensagens humanas...");
+      return;
     }
 
-    // Cria novo timer
-    const timer = setTimeout(async () => {
-      try {
-        const messages = messageBuffers.get(from) || [];
-        messageBuffers.delete(from);
-        responseTimers.delete(from);
+    // 🧠 Consolida mensagens
+    const messages = messageBuffers.get(from) || [];
+    messageBuffers.delete(from);
 
-        const combinedMessage = messages.join("\n");
+    const combinedMessage = messages.join("\n");
 
-        console.log("🧠 Mensagens combinadas:", combinedMessage);
+    console.log("🧠 Mensagens combinadas:", combinedMessage);
 
-        // -----------------------------------------
-        // 🧠 CONTROLE DE ESTADO
-        // -----------------------------------------
-        if (!conversationState.has(from)) {
-          conversationState.set(from, "INIT");
-        }
+    // 🤖 OpenAI
+    const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
 
-        const state = conversationState.get(from);
+    let threadId;
+    if (conversationThreads.has(from)) {
+      threadId = conversationThreads.get(from);
+    } else {
+      const thread = await openai.beta.threads.create();
+      threadId = thread.id;
+      conversationThreads.set(from, threadId);
+    }
 
-        // -----------------------------------------
-        // 🤖 OPENAI ASSISTANT
-        // -----------------------------------------
-        const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
+    await openai.beta.threads.messages.create(threadId, {
+      role: "user",
+      content: combinedMessage,
+    });
 
-        let threadId;
-        if (conversationThreads.has(from)) {
-          threadId = conversationThreads.get(from);
-        } else {
-          const thread = await openai.beta.threads.create();
-          threadId = thread.id;
-          conversationThreads.set(from, threadId);
-        }
+    const run = await openai.beta.threads.runs.create(threadId, {
+      assistant_id: OPENAI_ASSISTANT_ID,
+    });
 
-        const contextualMessage = `
-ETAPA_ATUAL: ${state}
+    let runStatus = run;
+    while (runStatus.status === "queued" || runStatus.status === "in_progress") {
+      await new Promise((r) => setTimeout(r, 1000));
+      runStatus = await openai.beta.threads.runs.retrieve(threadId, run.id);
+    }
 
-MENSAGENS_DO_CLIENTE:
-${combinedMessage}
+    if (runStatus.status !== "completed") return;
 
-INSTRUÇÕES:
-- Responda sempre às perguntas do cliente primeiro
-- Não se reapresente se ETAPA_ATUAL != INIT
-- Se perguntarem o que você vende, responda claramente
-- Conduza a conversa de forma humana
-- Só fale sobre compras se fizer sentido no contexto
-`.trim();
+    const messagesList = await openai.beta.threads.messages.list(threadId);
+    const last = messagesList.data.reverse().find(m => m.role === "assistant");
 
-        await openai.beta.threads.messages.create(threadId, {
-          role: "user",
-          content: contextualMessage,
-        });
+    if (!last?.content?.length) return;
 
-        const run = await openai.beta.threads.runs.create(threadId, {
-          assistant_id: OPENAI_ASSISTANT_ID,
-        });
+    const iaResponse = last.content.map(p => p.text?.value || "").join("\n");
 
-        let runStatus = run;
-        while (
-          runStatus.status === "queued" ||
-          runStatus.status === "in_progress"
-        ) {
-          await new Promise((r) => setTimeout(r, 1000));
-          runStatus = await openai.beta.threads.runs.retrieve(
-            threadId,
-            run.id
-          );
-        }
+    console.log("🤖 Resposta do Martin:", iaResponse);
 
-        if (runStatus.status !== "completed") {
-          return;
-        }
-
-        const messagesList = await openai.beta.threads.messages.list(threadId);
-        const last = messagesList.data
-          .slice()
-          .reverse()
-          .find((m) => m.role === "assistant");
-
-        if (!last || !last.content?.length) {
-          return;
-        }
-
-        const iaResponse = last.content
-          .map((p) => p.text?.value || "")
-          .join("\n")
-          .trim();
-
-        console.log("🤖 Resposta do Martin:", iaResponse);
-
-        // -----------------------------------------
-        // 🧠 ATUALIZA ESTADO (simples e seguro)
-        // -----------------------------------------
-        if (
-          iaResponse.toLowerCase().includes("compras") &&
-          state === "INIT"
-        ) {
-          conversationState.set(from, "WAITING_BUYER_CONFIRMATION");
-        }
-
-        if (
-          iaResponse.toLowerCase().includes("nome") &&
-          iaResponse.toLowerCase().includes("telefone")
-        ) {
-          conversationState.set(from, "WAITING_BUYER_CONTACT");
-        }
-
-        // -----------------------------------------
-        // 📤 ENVIA WHATSAPP
-        // -----------------------------------------
-        await sendText(
-          ZAPI_INSTANCE_ID,
-          ZAPI_TOKEN,
-          ZAPI_CLIENT_TOKEN,
-          from,
-          iaResponse
-        );
-
-      } catch (err) {
-        console.error("❌ Erro no processamento pós-debounce:", err);
-      }
-    }, DEBOUNCE_TIME);
-
-    responseTimers.set(from, timer);
+    await sendText(
+      ZAPI_INSTANCE_ID,
+      ZAPI_TOKEN,
+      ZAPI_CLIENT_TOKEN,
+      from,
+      iaResponse
+    );
 
   } catch (err) {
     console.error("❌ Erro geral:", err);
@@ -229,5 +141,5 @@ export async function sendText(instanceId, token, clientToken, to, msg) {
       "client-token": clientToken,
     },
     body: JSON.stringify({ phone: to, message: msg }),
-  }).then((r) => r.json());
+  }).then(r => r.json());
 }
