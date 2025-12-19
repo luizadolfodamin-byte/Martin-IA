@@ -17,7 +17,7 @@ export async function handleIncomingMessage(data) {
       return;
     }
 
-    // 🔁 Evita mensagem duplicada
+    // 🔁 Evita duplicação
     if (processedMessages.has(data.messageId)) {
       console.log("🔁 Mensagem duplicada ignorada:", data.messageId);
       return;
@@ -43,7 +43,6 @@ export async function handleIncomingMessage(data) {
 
     const from = data.phone;
 
-    // 🧠 Texto exatamente como o cliente escreveu
     const userMessage = data.text?.message?.trim();
     if (!userMessage) {
       console.warn("⚠️ Mensagem sem texto.");
@@ -52,25 +51,25 @@ export async function handleIncomingMessage(data) {
 
     console.log("📝 Mensagem do cliente:", userMessage);
 
-    // 🤖 OpenAI — CHAT PURO (espelho do Playground)
     const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
 
+    // ✅ USO CORRETO DA RESPONSES API
     const response = await openai.responses.create({
       model: "gpt-4.1-mini",
-      messages: [
+      input: [
         {
           role: "system",
           content: `
 Você é Martin, representante comercial virtual da linha Santa Clara.
 Você trabalha junto com o Luiz para facilitar o atendimento comercial via WhatsApp.
 
-Regras simples:
+Regras:
 - Responda SEMPRE a pergunta do cliente primeiro.
 - Seja natural, humano e direto.
 - Se for a primeira mensagem, apresente-se brevemente.
-- Depois de responder a pergunta, se fizer sentido, confirme se a pessoa cuida das compras.
+- Após responder, se fizer sentido, confirme se a pessoa cuida das compras.
 - Nunca ignore perguntas.
-- Nunca volte para apresentação se o cliente já perguntou algo.
+- Nunca reapresente se o cliente já perguntou algo.
 `
         },
         {
@@ -86,7 +85,6 @@ Regras simples:
 
     console.log("🤖 Resposta do Martin:", assistantReply);
 
-    // 📤 Envia exatamente o que o modelo respondeu
     await sendText(
       ZAPI_INSTANCE_ID,
       ZAPI_TOKEN,
@@ -115,3 +113,4 @@ export async function sendText(instanceId, token, clientToken, to, msg) {
     }),
   }).then((r) => r.json());
 }
+
