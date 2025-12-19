@@ -35,6 +35,9 @@ export async function handleIncomingMessage(data) {
       OPENAI_ASSISTANT_ID,
     } = process.env;
 
+    // 🔍 LOG CRÍTICO PARA TESTE
+    console.log("🧠 Assistant ID em uso no backend:", OPENAI_ASSISTANT_ID);
+
     if (
       !ZAPI_INSTANCE_ID ||
       !ZAPI_TOKEN ||
