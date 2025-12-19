@@ -1,16 +1,22 @@
 import OpenAI from "openai";
 
-// 🧠 Memória nativa do Assistant (thread por telefone)
+/**
+ * Mapa de threads fixas por telefone
+ * (1 telefone = 1 thread = memória contínua)
+ */
 const conversationThreads = new Map();
 
-// 🔁 Deduplicação técnica por messageId
+/**
+ * Deduplicação técnica por messageId
+ * (evita mensagens repetidas do webhook)
+ */
 const processedMessages = new Set();
 
 export async function handleIncomingMessage(data) {
   try {
     console.log("📩 Webhook recebido:", data);
 
-    // 🔒 Filtros técnicos (somente eventos válidos)
+    // 🔒 Filtros técnicos obrigatórios
     if (
       data.fromMe === true ||
       data.isStatusReply === true ||
@@ -20,9 +26,9 @@ export async function handleIncomingMessage(data) {
       return;
     }
 
-    // 🔁 Evita processar o mesmo evento duas vezes
+    // 🔁 Deduplicação por messageId
     if (processedMessages.has(data.messageId)) {
-      console.log("🔁 Evento duplicado ignorado:", data.messageId);
+      console.log("🔁 Mensagem duplicada ignorada:", data.messageId);
       return;
     }
     processedMessages.add(data.messageId);
@@ -48,10 +54,10 @@ export async function handleIncomingMessage(data) {
 
     const from = data.phone;
 
-    // 🧠 Texto CRU do cliente (sem tratamento cognitivo)
+    // 📩 Texto CRU do cliente (espelho do Playground)
     const userMessage = data.text?.message?.trim();
     if (!userMessage) {
-      console.warn("⚠️ Mensagem sem texto ignorada.");
+      console.warn("⚠️ Mensagem sem texto.");
       return;
     }
 
@@ -60,7 +66,7 @@ export async function handleIncomingMessage(data) {
     // 🤖 OpenAI
     const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
 
-    // 🔗 Thread fixa por telefone (memória real)
+    // 🔗 Thread fixa por telefone
     let threadId;
     if (conversationThreads.has(from)) {
       threadId = conversationThreads.get(from);
@@ -68,10 +74,10 @@ export async function handleIncomingMessage(data) {
       const thread = await openai.beta.threads.create();
       threadId = thread.id;
       conversationThreads.set(from, threadId);
-      console.log("🆕 Thread criada:", threadId);
+      console.log("🆕 Thread criada para o telefone:", threadId);
     }
 
-    // 📤 Envia exatamente o que o cliente escreveu
+    // ➡️ Envia exatamente o que o cliente escreveu
     await openai.beta.threads.messages.create(threadId, {
       role: "user",
       content: userMessage,
@@ -82,15 +88,15 @@ export async function handleIncomingMessage(data) {
       assistant_id: OPENAI_ASSISTANT_ID,
     });
 
-    // ⏳ Aguarda o processamento do modelo
+    // ⏳ Aguarda processamento
     let runStatus = run;
     while (runStatus.status === "queued" || runStatus.status === "in_progress") {
-      await new Promise((r) => setTimeout(r, 800));
+      await new Promise((r) => setTimeout(r, 1000));
       runStatus = await openai.beta.threads.runs.retrieve(threadId, run.id);
     }
 
     if (runStatus.status !== "completed") {
-      console.error("❌ Run não concluído:", runStatus.status);
+      console.error("❌ Run não finalizado:", runStatus.status);
       return;
     }
 
@@ -113,7 +119,7 @@ export async function handleIncomingMessage(data) {
 
     console.log("🤖 Resposta do Martin:", assistantReply);
 
-    // 📲 Envia exatamente o que o Assistant respondeu
+    // 📤 Envia exatamente a resposta do Assistant
     await sendText(
       ZAPI_INSTANCE_ID,
       ZAPI_TOKEN,
