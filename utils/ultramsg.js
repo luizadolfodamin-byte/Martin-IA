@@ -1,13 +1,25 @@
 import OpenAI from "openai";
 
-// 🧠 Thread persistente por telefone
+// 🧠 Thread por telefone (memória da conversa)
 const conversationThreads = new Map();
+
+// 🧠 Estado da conversa por telefone
+const conversationState = new Map();
+
+// 🧺 Buffer de mensagens (mensagens curtas em sequência)
+const messageBuffers = new Map();
+
+// 🔒 Lock por telefone
+const processingLocks = new Set();
+
+// ⏱️ Tempo humano de espera (30s)
+const DEBOUNCE_TIME = 30000;
 
 export async function handleIncomingMessage(data) {
   try {
-    console.log("📩 Mensagem recebida do WhatsApp:", data);
+    console.log("📩 Webhook recebido:", data);
 
-    // 🔒 Filtro de eventos inválidos / duplicados
+    // 🔒 Filtro de eventos inválidos
     if (
       data.fromMe === true ||
       data.isStatusReply === true ||
@@ -17,48 +29,47 @@ export async function handleIncomingMessage(data) {
       return;
     }
 
-    const instanceId = process.env.ZAPI_INSTANCE_ID;
-    const token = process.env.ZAPI_TOKEN;
-    const clientToken = process.env.ZAPI_CLIENT_TOKEN;
-    const openaiKey = process.env.OPENAI_API_KEY;
-    const assistantId = process.env.OPENAI_ASSISTANT_ID;
+    const {
+      ZAPI_INSTANCE_ID,
+      ZAPI_TOKEN,
+      ZAPI_CLIENT_TOKEN,
+      OPENAI_API_KEY,
+      OPENAI_ASSISTANT_ID,
+    } = process.env;
 
-    if (!instanceId || !token || !clientToken || !openaiKey || !assistantId) {
+    if (
+      !ZAPI_INSTANCE_ID ||
+      !ZAPI_TOKEN ||
+      !ZAPI_CLIENT_TOKEN ||
+      !OPENAI_API_KEY ||
+      !OPENAI_ASSISTANT_ID
+    ) {
       console.error("❌ Variáveis de ambiente ausentes.");
       return;
     }
 
     const from = data.phone;
 
+    // 🔒 Evita concorrência
+    if (processingLocks.has(from)) {
+      console.log("🔒 Já processando este telefone.");
+      return;
+    }
+
     // -----------------------------------------
     // 🧠 NORMALIZAÇÃO DA MENSAGEM
     // -----------------------------------------
     let normalizedMessage = "";
 
-    // 📩 Texto
     if (data.text?.message) {
       normalizedMessage = data.text.message.trim();
     }
 
-    // 📇 Contato via vCard
+    // VCARD real
     else if (data.vcard || data.message?.vcard) {
       const vcard = data.vcard || data.message.vcard;
-
-      const nameMatch = vcard.match(/FN:(.*)/);
-      const phoneMatch = vcard.match(/TEL;?.*:(.*)/);
-
-      const name = nameMatch ? nameMatch[1] : "Nome não informado";
-      const phone = phoneMatch ? phoneMatch[1] : "Telefone não informado";
-
-      normalizedMessage = `Contato enviado:\nNome: ${name}\nTelefone: ${phone}`;
-    }
-
-    // 📇 Contato estruturado
-    else if (data.message?.contact || data.message?.contacts) {
-      const c = data.message.contact || data.message.contacts?.[0];
-      const name = c?.name || "Nome não informado";
-      const phone = c?.phone || c?.phoneNumber || "Telefone não informado";
-
+      const name = vcard.match(/FN:(.*)/)?.[1] || "Nome não informado";
+      const phone = vcard.match(/TEL;?.*:(.*)/)?.[1] || "Telefone não informado";
       normalizedMessage = `Contato enviado:\nNome: ${name}\nTelefone: ${phone}`;
     }
 
@@ -70,11 +81,38 @@ export async function handleIncomingMessage(data) {
     console.log("📝 Mensagem normalizada:", normalizedMessage);
 
     // -----------------------------------------
-    // 🤖 OPENAI ASSISTANT (fluxo direto)
+    // 🧺 BUFFER DE MENSAGENS
     // -----------------------------------------
-    const openai = new OpenAI({ apiKey: openaiKey });
+    if (!messageBuffers.has(from)) {
+      messageBuffers.set(from, []);
+    }
 
-    // 🔁 Um thread por telefone (igual Playground)
+    messageBuffers.get(from).push(normalizedMessage);
+    processingLocks.add(from);
+
+    await new Promise((resolve) => setTimeout(resolve, DEBOUNCE_TIME));
+
+    const messages = messageBuffers.get(from) || [];
+    messageBuffers.delete(from);
+
+    const combinedMessage = messages.join("\n");
+
+    console.log("🧠 Mensagens combinadas:", combinedMessage);
+
+    // -----------------------------------------
+    // 🧠 CONTROLE DE ESTADO
+    // -----------------------------------------
+    if (!conversationState.has(from)) {
+      conversationState.set(from, "INIT");
+    }
+
+    const state = conversationState.get(from);
+
+    // -----------------------------------------
+    // 🤖 OPENAI ASSISTANT
+    // -----------------------------------------
+    const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
+
     let threadId;
     if (conversationThreads.has(from)) {
       threadId = conversationThreads.get(from);
@@ -84,48 +122,53 @@ export async function handleIncomingMessage(data) {
       conversationThreads.set(from, threadId);
     }
 
-    // Envia mensagem do usuário
+    // 🔥 CONTEXTO REAL PASSADO AO AGENTE
+    const contextualMessage = `
+ETAPA_ATUAL: ${state}
+
+MENSAGENS_DO_CLIENTE:
+${combinedMessage}
+
+REGRAS:
+- Nunca se reapresente se ETAPA_ATUAL != INIT
+- Responda exatamente às perguntas do cliente
+- Se perguntarem "o que você vende", responda claramente
+- Só pergunte sobre compras se fizer sentido na conversa
+- Não volte etapas
+`.trim();
+
     await openai.beta.threads.messages.create(threadId, {
       role: "user",
-      content: normalizedMessage,
+      content: contextualMessage,
     });
 
-    // Executa o assistant
     const run = await openai.beta.threads.runs.create(threadId, {
-      assistant_id: assistantId,
+      assistant_id: OPENAI_ASSISTANT_ID,
     });
 
-    // Aguarda finalização
     let runStatus = run;
-    while (
-      runStatus.status === "queued" ||
-      runStatus.status === "in_progress"
-    ) {
+    while (runStatus.status === "queued" || runStatus.status === "in_progress") {
       await new Promise((r) => setTimeout(r, 1000));
-      runStatus = await openai.beta.threads.runs.retrieve(
-        threadId,
-        run.id
-      );
+      runStatus = await openai.beta.threads.runs.retrieve(threadId, run.id);
     }
 
     if (runStatus.status !== "completed") {
-      console.error("❌ Run não completado:", runStatus.status);
+      processingLocks.delete(from);
       return;
     }
 
-    // Busca a ÚLTIMA resposta do assistant
     const messagesList = await openai.beta.threads.messages.list(threadId);
-    const lastAssistantMessage = messagesList.data
+    const last = messagesList.data
       .slice()
       .reverse()
       .find((m) => m.role === "assistant");
 
-    if (!lastAssistantMessage || !lastAssistantMessage.content?.length) {
-      console.error("❌ Nenhuma resposta do assistant.");
+    if (!last || !last.content?.length) {
+      processingLocks.delete(from);
       return;
     }
 
-    const iaResponse = lastAssistantMessage.content
+    const iaResponse = last.content
       .map((p) => p.text?.value || "")
       .join("\n")
       .trim();
@@ -133,9 +176,32 @@ export async function handleIncomingMessage(data) {
     console.log("🤖 Resposta do Martin:", iaResponse);
 
     // -----------------------------------------
-    // 📤 ENVIO AO WHATSAPP
+    // 🧠 ATUALIZA ESTADO
     // -----------------------------------------
-    await sendText(instanceId, token, clientToken, from, iaResponse);
+    if (iaResponse.includes("A parte de compras é com você")) {
+      conversationState.set(from, "WAITING_BUYER_CONFIRMATION");
+    }
+
+    if (
+      iaResponse.includes("nome") &&
+      iaResponse.includes("telefone") &&
+      iaResponse.includes("compras")
+    ) {
+      conversationState.set(from, "WAITING_BUYER_CONTACT");
+    }
+
+    // -----------------------------------------
+    // 📤 ENVIA WHATSAPP
+    // -----------------------------------------
+    await sendText(
+      ZAPI_INSTANCE_ID,
+      ZAPI_TOKEN,
+      ZAPI_CLIENT_TOKEN,
+      from,
+      iaResponse
+    );
+
+    processingLocks.delete(from);
 
   } catch (err) {
     console.error("❌ Erro geral:", err);
@@ -145,17 +211,12 @@ export async function handleIncomingMessage(data) {
 export async function sendText(instanceId, token, clientToken, to, msg) {
   const url = `https://api.z-api.io/instances/${instanceId}/token/${token}/send-text`;
 
-  const response = await fetch(url, {
+  return fetch(url, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       "client-token": clientToken,
     },
-    body: JSON.stringify({
-      phone: to,
-      message: msg,
-    }),
-  });
-
-  return response.json();
+    body: JSON.stringify({ phone: to, message: msg }),
+  }).then((r) => r.json());
 }
