@@ -1,22 +1,16 @@
 import OpenAI from "openai";
 
-/**
- * Mapa de threads fixas por telefone
- * (1 telefone = 1 thread = memória contínua)
- */
+// 🧠 Thread fixa por telefone (espelho do Playground)
 const conversationThreads = new Map();
 
-/**
- * Deduplicação técnica por messageId
- * (evita mensagens repetidas do webhook)
- */
+// 🔁 Deduplicação simples por messageId
 const processedMessages = new Set();
 
 export async function handleIncomingMessage(data) {
   try {
     console.log("📩 Webhook recebido:", data);
 
-    // 🔒 Filtros técnicos obrigatórios
+    // 🔒 Filtros técnicos
     if (
       data.fromMe === true ||
       data.isStatusReply === true ||
@@ -54,7 +48,7 @@ export async function handleIncomingMessage(data) {
 
     const from = data.phone;
 
-    // 📩 Texto CRU do cliente (espelho do Playground)
+    // 🧠 Texto CRU do cliente
     const userMessage = data.text?.message?.trim();
     if (!userMessage) {
       console.warn("⚠️ Mensagem sem texto.");
@@ -68,13 +62,31 @@ export async function handleIncomingMessage(data) {
 
     // 🔗 Thread fixa por telefone
     let threadId;
+    let isNewThread = false;
+
     if (conversationThreads.has(from)) {
       threadId = conversationThreads.get(from);
     } else {
       const thread = await openai.beta.threads.create();
       threadId = thread.id;
       conversationThreads.set(from, threadId);
-      console.log("🆕 Thread criada para o telefone:", threadId);
+      isNewThread = true;
+      console.log("🆕 Thread criada:", threadId);
+    }
+
+    /**
+     * 🔑 CORREÇÃO CRÍTICA
+     * Injeta UMA mensagem de sistema apenas na criação da thread
+     * Isso simula o comportamento do Assistant Playground
+     */
+    if (isNewThread) {
+      await openai.beta.threads.messages.create(threadId, {
+        role: "system",
+        content:
+          "Esta é uma conversa ativa com um cliente humano via WhatsApp. " +
+          "Responda sempre primeiro ao que o cliente perguntar. " +
+          "Depois conduza a conversa de forma natural conforme seu papel.",
+      });
     }
 
     // ➡️ Envia exatamente o que o cliente escreveu
