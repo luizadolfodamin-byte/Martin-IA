@@ -3,17 +3,18 @@ import OpenAI from "openai";
 // 🧠 Thread persistente por telefone
 const conversationThreads = new Map();
 
-// 🧺 Buffer de mensagens por telefone
+// 🧺 Buffer estruturado por telefone
+// { messages: [], timer: Timeout }
 const messageBuffers = new Map();
 
-// ⏱️ Tempo de espera humano (30 segundos)
+// ⏱️ Tempo de espera humano (30s)
 const DEBOUNCE_TIME = 30000;
 
 export async function handleIncomingMessage(data) {
   try {
     console.log("📩 Mensagem recebida do WhatsApp:", data);
 
-    // 🔒 Filtro de eventos inválidos / duplicados
+    // 🔒 Filtro de eventos inválidos
     if (
       data.fromMe === true ||
       data.isStatusReply === true ||
@@ -41,31 +42,21 @@ export async function handleIncomingMessage(data) {
     // -----------------------------------------
     let normalizedMessage = "";
 
-    // 📩 Texto
     if (data.text?.message) {
       normalizedMessage = data.text.message.trim();
-    }
-
-    // 📇 Contato via vCard
-    else if (data.vcard || data.message?.vcard) {
+    } else if (data.vcard || data.message?.vcard) {
       const vcard = data.vcard || data.message.vcard;
-
       const nameMatch = vcard.match(/FN:(.*)/);
       const phoneMatch = vcard.match(/TEL;?.*:(.*)/);
 
-      const name = nameMatch ? nameMatch[1] : "Nome não informado";
-      const phone = phoneMatch ? phoneMatch[1] : "Telefone não informado";
-
-      normalizedMessage = `Contato enviado:\nNome: ${name}\nTelefone: ${phone}`;
-    }
-
-    // 📇 Contato estruturado
-    else if (data.message?.contact || data.message?.contacts) {
+      normalizedMessage = `Contato enviado:
+Nome: ${nameMatch?.[1] || "Não informado"}
+Telefone: ${phoneMatch?.[1] || "Não informado"}`;
+    } else if (data.message?.contact || data.message?.contacts) {
       const c = data.message.contact || data.message.contacts?.[0];
-      const name = c?.name || "Nome não informado";
-      const phone = c?.phone || c?.phoneNumber || "Telefone não informado";
-
-      normalizedMessage = `Contato enviado:\nNome: ${name}\nTelefone: ${phone}`;
+      normalizedMessage = `Contato enviado:
+Nome: ${c?.name || "Não informado"}
+Telefone: ${c?.phone || c?.phoneNumber || "Não informado"}`;
     }
 
     if (!normalizedMessage) {
@@ -76,27 +67,23 @@ export async function handleIncomingMessage(data) {
     console.log("📝 Mensagem normalizada:", normalizedMessage);
 
     // -----------------------------------------
-    // 🧺 DEBOUNCE (somente agregação)
+    // 🧺 DEBOUNCE CORRETO
     // -----------------------------------------
     if (!messageBuffers.has(from)) {
-      messageBuffers.set(from, []);
+      messageBuffers.set(from, { messages: [], timer: null });
     }
 
-    messageBuffers.get(from).push(normalizedMessage);
+    const buffer = messageBuffers.get(from);
+    buffer.messages.push(normalizedMessage);
 
-    // Cancela debounce anterior
-    if (messageBuffers.get(from).timer) {
-      clearTimeout(messageBuffers.get(from).timer);
+    if (buffer.timer) {
+      clearTimeout(buffer.timer);
     }
 
-    // Cria novo debounce
-    const timer = setTimeout(async () => {
+    buffer.timer = setTimeout(async () => {
       try {
-        const messages = messageBuffers.get(from) || [];
+        const combinedMessage = buffer.messages.join("\n");
         messageBuffers.delete(from);
-
-        // 🔹 IMPORTANTE: mensagem limpa, sem rótulos
-        const combinedMessage = messages.join("\n");
 
         console.log("🧠 Mensagem combinada enviada ao Martin:", combinedMessage);
 
@@ -141,14 +128,12 @@ export async function handleIncomingMessage(data) {
         }
 
         const messagesList = await openai.beta.threads.messages.list(threadId);
-
-        // ✅ Sempre pega a ÚLTIMA resposta do assistant
         const lastAssistantMessage = messagesList.data
           .slice()
           .reverse()
           .find((m) => m.role === "assistant");
 
-        if (!lastAssistantMessage || !lastAssistantMessage.content?.length) {
+        if (!lastAssistantMessage?.content?.length) {
           console.error("❌ Nenhuma resposta do assistant.");
           return;
         }
@@ -167,9 +152,6 @@ export async function handleIncomingMessage(data) {
       }
     }, DEBOUNCE_TIME);
 
-    // Armazena timer
-    messageBuffers.get(from).timer = timer;
-
   } catch (err) {
     console.error("❌ Erro geral:", err);
   }
@@ -184,10 +166,7 @@ export async function sendText(instanceId, token, clientToken, to, msg) {
       "Content-Type": "application/json",
       "client-token": clientToken,
     },
-    body: JSON.stringify({
-      phone: to,
-      message: msg,
-    }),
+    body: JSON.stringify({ phone: to, message: msg }),
   });
 
   return response.json();
