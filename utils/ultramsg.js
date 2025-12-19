@@ -3,15 +3,6 @@ import OpenAI from "openai";
 // 🧠 Thread por telefone
 const conversationThreads = new Map();
 
-// 🧠 Buffer por telefone
-const messageBuffers = new Map();
-
-// ⏱️ Último timestamp de mensagem
-const lastMessageAt = new Map();
-
-// ⏱️ Janela humana (em ms)
-const HUMAN_WINDOW = 30000;
-
 export async function handleIncomingMessage(data) {
   try {
     console.log("📩 Webhook recebido:", data);
@@ -48,37 +39,12 @@ export async function handleIncomingMessage(data) {
 
     // 🧠 Normalização
     let normalizedMessage = "";
-
     if (data.text?.message) {
       normalizedMessage = data.text.message.trim();
     }
-
     if (!normalizedMessage) return;
 
     console.log("📝 Mensagem normalizada:", normalizedMessage);
-
-    // 🧺 Buffer
-    if (!messageBuffers.has(from)) {
-      messageBuffers.set(from, []);
-    }
-
-    messageBuffers.get(from).push(normalizedMessage);
-    lastMessageAt.set(from, Date.now());
-
-    // ⏳ Se ainda está dentro da janela humana, NÃO responde
-    const now = Date.now();
-    if (now - lastMessageAt.get(from) < HUMAN_WINDOW) {
-      console.log("⏳ Aguardando mais mensagens humanas...");
-      return;
-    }
-
-    // 🧠 Consolida mensagens
-    const messages = messageBuffers.get(from) || [];
-    messageBuffers.delete(from);
-
-    const combinedMessage = messages.join("\n");
-
-    console.log("🧠 Mensagens combinadas:", combinedMessage);
 
     // 🤖 OpenAI
     const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
@@ -94,7 +60,7 @@ export async function handleIncomingMessage(data) {
 
     await openai.beta.threads.messages.create(threadId, {
       role: "user",
-      content: combinedMessage,
+      content: normalizedMessage,
     });
 
     const run = await openai.beta.threads.runs.create(threadId, {
@@ -111,10 +77,11 @@ export async function handleIncomingMessage(data) {
 
     const messagesList = await openai.beta.threads.messages.list(threadId);
     const last = messagesList.data.reverse().find(m => m.role === "assistant");
-
     if (!last?.content?.length) return;
 
-    const iaResponse = last.content.map(p => p.text?.value || "").join("\n");
+    const iaResponse = last.content
+      .map(p => p.text?.value || "")
+      .join("\n");
 
     console.log("🤖 Resposta do Martin:", iaResponse);
 
