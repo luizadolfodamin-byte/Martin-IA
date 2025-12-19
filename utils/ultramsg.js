@@ -58,9 +58,18 @@ export async function handleIncomingMessage(data) {
       conversationThreads.set(from, threadId);
     }
 
+    // 🔑 ENVELOPE DE PRIORIDADE (CORREÇÃO PRINCIPAL)
+    const wrappedMessage = `
+O cliente disse ou perguntou o seguinte:
+"${normalizedMessage}"
+
+Responda primeiro ao que o cliente perguntou.
+Depois, se fizer sentido, conduza a conversa naturalmente conforme seu papel.
+`.trim();
+
     await openai.beta.threads.messages.create(threadId, {
       role: "user",
-      content: normalizedMessage,
+      content: wrappedMessage,
     });
 
     const run = await openai.beta.threads.runs.create(threadId, {
@@ -76,12 +85,17 @@ export async function handleIncomingMessage(data) {
     if (runStatus.status !== "completed") return;
 
     const messagesList = await openai.beta.threads.messages.list(threadId);
-    const last = messagesList.data.reverse().find(m => m.role === "assistant");
+    const last = messagesList.data
+      .slice()
+      .reverse()
+      .find((m) => m.role === "assistant");
+
     if (!last?.content?.length) return;
 
     const iaResponse = last.content
-      .map(p => p.text?.value || "")
-      .join("\n");
+      .map((p) => p.text?.value || "")
+      .join("\n")
+      .trim();
 
     console.log("🤖 Resposta do Martin:", iaResponse);
 
@@ -108,5 +122,5 @@ export async function sendText(instanceId, token, clientToken, to, msg) {
       "client-token": clientToken,
     },
     body: JSON.stringify({ phone: to, message: msg }),
-  }).then(r => r.json());
+  }).then((r) => r.json());
 }
